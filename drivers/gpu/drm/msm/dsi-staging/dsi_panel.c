@@ -824,9 +824,19 @@ static int dsi_panel_wled_register(struct dsi_panel *panel,
 	return 0;
 }
 
+#ifdef VENDOR_EDIT
+extern int oppo_display_get_hbm_mode(void);
+extern int power_change_update_backlight;
+extern int oppo_dimlayer_bl_enable_v2;
+extern int oppo_dimlayer_bl_enable_v2_real;
 extern int oppo_dimlayer_bl_alpha;
 extern int oppo_dimlayer_bl_enabled;
 extern int oppo_dimlayer_bl_enable_real;
+ktime_t oppo_backlight_time;
+u32 oppo_last_backlight = 0;
+u32 oppo_backlight_delta = 0;
+extern int oppo_panel_update_seed_mode_unlock(struct dsi_panel *panel);
+#endif /* VENDOR_EDIT */
 static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	u32 bl_lvl)
 {
@@ -839,6 +849,66 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	}
 
 	dsi = &panel->mipi_device;
+
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-11-21
+ * Add for OnScreenFingerprint feature
+*/
+
+        if (!panel->is_hbm_enabled &&
+                oppo_dimlayer_bl_enable_v2_real && bl_lvl == 0) {
+                oppo_seed_backlight = 0;
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SEED_OFF);
+		pr_info("%s-%d:close the seed off,rc=%d!\n",__func__,__LINE__,rc);
+        } else if (!panel->is_hbm_enabled &&
+		oppo_dimlayer_bl_enable_v2_real && bl_lvl > 1 && bl_lvl < 260) {
+		oppo_seed_backlight = bl_lvl;
+		bl_lvl = oppo_dimlayer_bl_alpha;
+		oppo_panel_update_seed_mode_unlock(panel);
+	} else if (oppo_seed_backlight) {
+		oppo_seed_backlight = 0;
+		oppo_panel_update_seed_mode_unlock(panel);
+	}
+
+	if ((get_oppo_display_scene() == 2) && (bl_lvl == 1)) {
+		pr_err("dsi_cmd AOD hbm bl_lvl:1 return\n",bl_lvl);
+		return 0;
+	}
+
+	if (panel->is_hbm_enabled && bl_lvl != 0) {
+		pr_err("dsi_cmd is_hbm_enabled bl_lvl is %d\n",bl_lvl);
+		if(power_change_update_backlight == 1){
+			dsi_panel_tx_cmd_set(panel, DSI_CMD_AOD_HBM_ON);
+			power_change_update_backlight = 0;
+			pr_err("dsi_cmd global hbm power changed\n");
+		}
+		return 0;
+	}
+	if (bl_lvl > 1) {
+		if (bl_lvl > oppo_last_backlight)
+			oppo_backlight_delta = bl_lvl - oppo_last_backlight;
+		else
+			oppo_backlight_delta = oppo_last_backlight - bl_lvl;
+		oppo_last_backlight = bl_lvl;
+		oppo_backlight_time = ktime_get();
+	}
+	if (oppo_dimlayer_bl_enabled != oppo_dimlayer_bl_enable_real) {
+		oppo_dimlayer_bl_enable_real = oppo_dimlayer_bl_enabled;
+		if (oppo_dimlayer_bl_enable_real) {
+			pr_err("Enter DC backlight\n");
+		} else {
+			pr_err("Exit DC backlight\n");
+		}
+	}
+	if (oppo_dimlayer_bl_enable_real) {
+		/*
+		 * avoid effect power and aod mode
+		 */
+		if (bl_lvl > 1)
+			bl_lvl = oppo_dimlayer_bl_alpha;
+	}
+
+#endif /* VENDOR_EDIT */
 
 	rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
 	if (rc < 0)

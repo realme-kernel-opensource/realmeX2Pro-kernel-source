@@ -1724,22 +1724,24 @@ int oppo_dimlayer_bl_alpha_value = 260;
 int oppo_dimlayer_bl_enable_real = 0;
 int oppo_dimlayer_dither_threshold = 0;
 int oppo_dimlayer_dither_bitdepth = 6;
-int oppo_dimlayer_bl_delay=0;
+int oppo_dimlayer_bl_delay = 500;
+int oppo_dimlayer_bl_delay_after = 0;
 static ssize_t oppo_display_get_dimlayer_backlight(struct device *dev,
                                 struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d %d %d %d %d\n", oppo_dimlayer_bl_alpha,
+	return sprintf(buf, "%d %d %d %d %d %d\n", oppo_dimlayer_bl_alpha,
 			oppo_dimlayer_bl_alpha_value, oppo_dimlayer_dither_threshold,
-			oppo_dimlayer_dither_bitdepth, oppo_dimlayer_bl_delay);
+			oppo_dimlayer_dither_bitdepth, oppo_dimlayer_bl_delay, oppo_dimlayer_bl_delay_after);
 }
 
 static ssize_t oppo_display_set_dimlayer_backlight(struct device *dev,
                                struct device_attribute *attr,
                                const char *buf, size_t count)
 {
-	sscanf(buf, "%d %d %d %d %d", &oppo_dimlayer_bl_alpha,
+	sscanf(buf, "%d %d %d %d %d %d", &oppo_dimlayer_bl_alpha,
 		&oppo_dimlayer_bl_alpha_value, &oppo_dimlayer_dither_threshold,
-		&oppo_dimlayer_dither_bitdepth, &oppo_dimlayer_bl_delay);
+		&oppo_dimlayer_dither_bitdepth, &oppo_dimlayer_bl_delay,
+		&oppo_dimlayer_bl_delay_after);
 
 	return count;
 }
@@ -1764,11 +1766,31 @@ static ssize_t oppo_display_get_dimlayer_hbm(struct device *dev,
 	return sprintf(buf, "%d\n", oppo_dimlayer_hbm);
 }
 
+int oppo_dimlayer_hbm_vblank_count = 0;
+atomic_t oppo_dimlayer_hbm_vblank_ref = ATOMIC_INIT(0);
 static ssize_t oppo_display_set_dimlayer_hbm(struct device *dev,
                                struct device_attribute *attr,
                                const char *buf, size_t count)
 {
-	sscanf(buf, "%d", &oppo_dimlayer_hbm);
+	struct dsi_display *display = get_main_display();
+	struct drm_connector *dsi_connector = display->drm_conn;
+	int err = 0;
+	int value = 0;
+
+	sscanf(buf, "%d", &value);
+	value = !!value;
+	if (oppo_dimlayer_hbm == value)
+		return count;
+
+	err = drm_crtc_vblank_get(dsi_connector->state->crtc);
+	if (err) {
+		pr_err("failed to get crtc vblank, error=%d\n", err);
+	} else {
+		/* do vblank put after 5 frames */
+		oppo_dimlayer_hbm_vblank_count = 5;
+		atomic_inc(&oppo_dimlayer_hbm_vblank_ref);
+	}
+	oppo_dimlayer_hbm = value;
 
 	return count;
 }
@@ -1873,6 +1895,7 @@ static ssize_t oppo_display_notify_panel_blank(struct device *dev,
 }
 
 int oppo_onscreenfp_status = 0;
+
 static ssize_t oppo_display_notify_fp_press(struct device *dev,
 		struct device_attribute *attr,
 		const char *buf, size_t count)
@@ -1887,6 +1910,7 @@ static ssize_t oppo_display_notify_fp_press(struct device *dev,
 	static ktime_t on_time;
 	int onscreenfp_status = 0;
 	int err;
+	int vblank_get = -EINVAL;
 
 	sscanf(buf, "%du", &onscreenfp_status);
 	onscreenfp_status = !!onscreenfp_status;
@@ -1906,7 +1930,14 @@ static ssize_t oppo_display_notify_fp_press(struct device *dev,
 		}
 	}
 
+	vblank_get = drm_crtc_vblank_get(dsi_connector->state->crtc);
+	if (vblank_get) {
+		pr_err("failed to get crtc vblank\n", vblank_get);
+	}
+
 	oppo_onscreenfp_status = onscreenfp_status;
+
+
 	drm_modeset_lock_all(drm_dev);
 
 	state = drm_atomic_state_alloc(drm_dev);
@@ -1920,6 +1951,8 @@ static ssize_t oppo_display_notify_fp_press(struct device *dev,
 	}
 
 	drm_modeset_unlock_all(drm_dev);
+	if (!vblank_get)
+		drm_crtc_vblank_put(dsi_connector->state->crtc);
 
 	return count;
 }

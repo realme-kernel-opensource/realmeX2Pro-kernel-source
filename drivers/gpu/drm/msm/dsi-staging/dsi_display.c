@@ -210,6 +210,9 @@ void dsi_rect_intersect(const struct dsi_rect *r1,
 	}
 }
 
+int power_change_update_backlight = 0;
+extern u32 flag_writ;
+
 int dsi_display_set_backlight(struct drm_connector *connector,
 		void *display, u32 bl_lvl)
 {
@@ -229,7 +232,48 @@ int dsi_display_set_backlight(struct drm_connector *connector,
 		rc = -EINVAL;
 		goto error;
 	}
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Display.LCD.Stable,2018-06-27
+ * Add key log for debug
+*/
 
+	if ((bl_lvl == 0 && panel->bl_config.bl_level != 0) ||
+		(bl_lvl != 0 && panel->bl_config.bl_level == 0)) {
+		pr_err("backlight level changed %d -> %d\n",panel->bl_config.bl_level, bl_lvl);
+		if(bl_lvl != 0 && panel->bl_config.bl_level == 0){
+			if(panel->is_hbm_enabled)
+			       power_change_update_backlight  = 1;
+		}
+		if(bl_lvl > 1023) {
+			flag_writ = 0;
+		} else if (bl_lvl > 1 || bl_lvl <= 1023){
+			flag_writ = 2;
+		}
+		}
+	/* Add some delay to avoid screen flash */
+	if (panel->need_power_on_backlight && bl_lvl) {
+		flag_writ = 3;
+		panel->need_power_on_backlight = false;
+		rc = dsi_display_clk_ctrl(dsi_display->dsi_clk_handle,
+			DSI_CORE_CLK, DSI_CLK_ON);
+		if (rc) {
+			pr_err("[%s] failed to send DSI_CMD_POST_ON_BACKLIGHT cmds, rc=%d\n",
+			       panel->name, rc);
+			goto error;
+		}
+
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_POST_ON_BACKLIGHT);
+
+		rc = dsi_display_clk_ctrl(dsi_display->dsi_clk_handle,
+			DSI_CORE_CLK, DSI_CLK_OFF);
+		if (rc) {
+			pr_err("[%s] failed to send DSI_CMD_POST_ON_BACKLIGHT cmds, rc=%d\n",
+			       panel->name, rc);
+			goto error;
+		}
+
+	}
+#endif /* VENDOR_EDIT */
 	panel->bl_config.bl_level = bl_lvl;
 
 	/* scale backlight */

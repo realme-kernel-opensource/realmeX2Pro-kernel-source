@@ -2997,8 +2997,6 @@ void sde_crtc_complete_commit(struct drm_crtc *crtc,
 		if (old_cstate->fingerprint_pressed != cstate->fingerprint_pressed) {
 			blank = cstate->fingerprint_pressed;
 			notifier_data.data = &blank;
-			if (cstate->fingerprint_defer_sync)
-				usleep_range(50 * 1000, 50 * 1000);
 			pr_err("fingerprint status: %s",
 			       blank ? "pressed" : "up");
 			msm_drm_notifier_call_chain(MSM_DRM_ONSCREENFINGERPRINT_EVENT,
@@ -5265,8 +5263,10 @@ extern int oppo_dimlayer_bl_alpha_value;
 extern bool is_dsi_panel(struct drm_crtc *crtc);
 extern int oppo_get_panel_brightness(void);
 extern int oppo_dimlayer_bl_enable;
-extern bool oppo_ffl_trigger_finish;
 int oppo_dimlayer_bl = 0;
+extern ktime_t oppo_backlight_time;
+extern u32 oppo_last_backlight;
+extern u32 oppo_backlight_delta;
 static int sde_crtc_onscreenfinger_atomic_check(struct sde_crtc_state *cstate,
 		struct plane_state *pstates, int cnt)
 {
@@ -5299,8 +5299,17 @@ static int sde_crtc_onscreenfinger_atomic_check(struct sde_crtc_state *cstate,
 		int backlight = oppo_get_panel_brightness();
 
 		if (backlight > 1 && backlight < oppo_dimlayer_bl_alpha_value) {
-			dimlayer_bl = 1;
-			oppo_dimlayer_bl = 1;
+			ktime_t now = ktime_get();
+			ktime_t delta = ktime_sub(now, oppo_backlight_time);
+
+			if (oppo_backlight_delta > 9) {
+				if (oppo_dimlayer_bl == 0 && ktime_to_ns(delta) > 25000000)
+					oppo_dimlayer_bl = 1;
+			} else {
+				oppo_dimlayer_bl = 1;
+			}
+			if (oppo_dimlayer_bl)
+				dimlayer_bl = 1;
 		} else {
 			oppo_dimlayer_bl = 0;
 		}
